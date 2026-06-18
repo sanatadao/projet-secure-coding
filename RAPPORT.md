@@ -79,6 +79,38 @@
 - *Moyen* (#5, #6, #7, #11) : aggravent une attaque mais ne suffisent
   pas seules à compromettre le système.
 
+## 2bis. Backlog priorisé (ordre de correction)
+
+Le correctif se fait du plus grave au moins grave, en respectant la
+règle : on traite d'abord ce qui permet une compromission totale et
+triviale, avant ce qui nécessite déjà un accès ou une étape préalable.
+
+| Ordre | # | Faille | Gravité | Justification de la priorité |
+|-------|---|--------|---------|-------------------------------|
+| 1 | 3 | Injection SQL — login (bypass) | Critique | Compromission totale du système (accès admin) en une seule requête `curl`, sans authentification préalable. Impact maximal, effort minimal. |
+| 2 | 8 | Injection SQL — GET /api/notes (via cookie) | Critique | Même classe de faille que #3 ; exploitable dès qu'on a un cookie de session (donc juste après avoir été authentifié, même en tant que simple user). |
+| 3 | 9 | Injection SQL — POST /api/notes | Critique | Idem : permet en plus l'écriture arbitraire en base (pas seulement la lecture), donc un vecteur supplémentaire de gravité. |
+| 4 | 1 | Mots de passe en clair | Élevé | Ne nécessite "que" l'accès à la base (déjà compromise via les SQLi ci-dessus) pour exposer tous les comptes ; corrigé tôt car il conditionne aussi le correctif du login (bcrypt). |
+| 5 | 4 | Fuite de l'objet user complet | Élevé | Expose immédiatement le mot de passe et le rôle à quiconque se connecte normalement — aucun effort d'attaque requis, juste regarder la réponse. |
+| 6 | 10 | IDOR sur /api/notes/[id] | Élevé | Permet de lire les données privées de n'importe quel autre utilisateur sans élévation de privilège ; un attaquant authentifié "normal" suffit. |
+| 7 | 12 | XSS stocké (commentaires) | Élevé | Touche tous les visiteurs de la page, pas seulement l'attaquant — risque de vol de session à grande échelle, mais nécessite qu'une victime visite la page (étape supplémentaire vs les SQLi). |
+| 8 | 2 | Secret en dur dans le code | Élevé | Risque différé/long terme (le secret reste dans l'historique Git même après correction) plutôt qu'immédiatement exploitable via l'app elle-même. |
+| 9 | 5 | Message d'erreur bavard (énumération) | Moyen | Facilite d'autres attaques (brute force ciblé) mais ne compromet rien directement à elle seule. |
+| 10 | 6 | Pas de rate limiting (brute force) | Moyen | Nécessite du temps/volume pour être exploitée ; aggravée par #5 mais traitable indépendamment. |
+| 11 | 7 | Cookie httpOnly:false | Moyen | N'est dangereux qu'en présence d'un XSS exploitable (#12) — donc dépend d'une autre faille pour avoir un impact réel ; traité juste après le XSS. |
+| 12 | 11 | CSRF sur /api/profil | Moyen | Nécessite qu'une victime déjà connectée visite une page piégée ; impact limité à un seul champ (email) dans ce projet. |
+
+**Principe général retenu** : les 3 injections SQL passent avant tout
+car elles permettent une compromission **immédiate et totale** sans
+aucun prérequis. Viennent ensuite les failles de **confidentialité**
+des données (mots de passe, fuite user, IDOR, XSS) qui exposent des
+données sensibles mais demandent un minimum de contexte (être
+authentifié, ou qu'une victime agisse). Enfin, les failles qui
+**aggravent** d'autres attaques sans être exploitables seules
+(énumération, absence de rate limiting, cookie non-httpOnly, CSRF)
+sont traitées en dernier, car corriger les failles critiques en amont
+réduit déjà une grande partie de leur impact potentiel.
+
 ## 3. Correctifs
 
 
