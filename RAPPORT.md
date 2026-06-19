@@ -398,6 +398,65 @@ de *sanitization* comme **DOMPurify** plutôt que de revenir à
 `dangerouslySetInnerHTML` brut (mentionné en bonus dans le brief,
 non implémenté ici par choix de rester sur la solution la plus sûre).
 
+### Faille #2 — Secret en dur dans le code commité — Élevé — A05
+
+**Problème** : `lib/config.ts` contenait la constante `SESSION_SECRET`
+écrite **en clair** directement dans le code source, et ce fichier
+était commité dans Git dès le commit initial. Un secret commité reste
+visible dans l'historique Git pour quiconque a accès au dépôt — même
+si on le supprime du fichier plus tard, il subsiste dans le passé du
+projet (`git log -p`).
+
+**Correctif (cause racine)** : déplacement du secret dans **`.env.local`**
+(fichier ajouté au `.gitignore`, jamais commité), avec lecture via
+`process.env.SESSION_SECRET`. Un fichier **`.env.example`** (sans la
+vraie valeur) est fourni pour que les autres développeurs sachent quelle
+variable configurer.
+
+- Avant :
+```typescript
+  export const SESSION_SECRET = "mn_live_8f3c1a9e2b7d4f60_PROD_DO_NOT_SHARE";
+```
+- Après :
+```typescript
+  export const SESSION_SECRET = process.env.SESSION_SECRET ?? "";
+```
+
+**Preuve — AVANT/APRÈS** :
+
+- AVANT :
+
+![alt text](image-23.png)
+
+Le secret est visible en clair dans le code source actuel. ❌
+
+- APRÈS : `lib/config.ts` ne contient plus aucune valeur secrète en
+  dur ; `git check-ignore -v .env.local` confirme que le fichier
+  contenant la vraie valeur est désormais ignoré par Git. ✅
+
+![alt text](image-24.png)
+
+**Non-régression vérifiée** : le login continue de fonctionner
+normalement (`{"message":"Connecté",...}`), confirmant que le secret
+est bien lu correctement depuis `.env.local`.
+
+**Limite assumée et documentée honnêtement** : déplacer le secret
+**ne le retire pas de l'historique Git passé** — la commande
+`git log -p -- lib/config.ts | grep SESSION_SECRET` continue de le
+révéler dans les anciens commits. La bonne pratique professionnelle
+complète aurait été de **roter** ce secret (générer une nouvelle
+valeur et invalider l'ancienne) en plus de le déplacer, voire de
+réécrire l'historique Git (`git filter-repo` ou BFG Repo-Cleaner) sur
+un vrai projet en production. Non fait ici car ce secret n'est pas
+utilisé pour un chiffrement réel dans ce labo — mais le principe est
+documenté pour montrer la compréhension de l'enjeu.
+
+
+
+
+
+
+
 
 
 
