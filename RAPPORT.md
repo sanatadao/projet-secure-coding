@@ -451,7 +451,78 @@ un vrai projet en production. Non fait ici car ce secret n'est pas
 utilisé pour un chiffrement réel dans ce labo — mais le principe est
 documenté pour montrer la compréhension de l'enjeu.
 
+### Faille #5 — Message d'erreur trop précis (énumération) — Moyen — A07
 
+**Problème** : le message d'erreur du login révélait si l'email
+existait en base (`"Aucun compte ${email} avec ce mot de passe"`),
+permettant à un attaquant d'**énumérer** les comptes valides en testant
+une liste d'emails.
+
+**Correctif (cause racine)** : message d'erreur **neutre et identique**,
+qu'il s'agisse d'un email inconnu ou d'un mauvais mot de passe :
+`"Email ou mot de passe invalide"` (corrigé en même temps que la SQLi,
+voir Faille #3/#8/#9 plus haut).
+
+**Preuve** : voir Faille #3 — la même commande de test confirme que le
+message ne varie plus selon que l'email existe ou non.
+
+---
+
+### Faille #6 — Absence de rate limiting (brute force) — Moyen — A07
+
+**Problème** : `app/api/login/route.ts` n'imposait aucune limite de
+tentatives. Un attaquant pouvait tester un nombre illimité de mots de
+passe par seconde contre un compte donné.
+
+**Correctif (cause racine)** : ajout d'un **rate limiting** en mémoire
+(`lib/rateLimit.ts`) : maximum 5 tentatives par email sur une fenêtre
+glissante de 60 secondes. Au-delà, la route répond `429 Too Many
+Requests` sans même interroger la base de données.
+
+```typescript
+const LIMITE = 5;
+const FENETRE_MS = 60_000;
+
+export function autoriser(cle: string): boolean {
+  // ... incrémente un compteur par clé, refuse au-delà de LIMITE
+}
+```
+
+**Preuve — AVANT/APRÈS** (7 tentatives consécutives sur
+`admin@mininotes.test`, mots de passe : `123456, password, admin,
+azerty, motdepasse, root, letmein`) :
+
+- AVANT :
+
+![alt text](image-25.png)
+
+Les 7 tentatives sont toutes traitées sans aucune limite — et l'une
+  d'elles (`admin`, le mot de passe par défaut du compte admin) réussit
+  d'ailleurs (`200`), illustrant concrètement le risque : un attaquant
+  sans aucune limite de tentatives peut trouver un mot de passe faible
+  en quelques essais seulement. ❌
+
+- APRÈS (même commande) :
+
+![alt text](image-26.png)
+
+Les 5 premières tentatives sont traitées normalement (la limite ne
+  s'applique qu'à partir de la 6ᵉ), puis les tentatives suivantes sont
+  **bloquées** avec `429`. ✅
+
+**Non-régression vérifiée** : le login d'Alice (`alice@mininotes.test`),
+un compte différent non concerné par le rate limiting déclenché sur le
+compte admin, continue de fonctionner normalement
+(`{"message":"Connecté",...}`).
+
+![alt text](image-27.png)
+
+**Limite** : le compteur est stocké
+**en mémoire** (`Map` JavaScript), donc remis à zéro à chaque redémarrage
+du serveur, et non partagé entre plusieurs instances en cas de scaling
+horizontal. En production, la bonne pratique est d'utiliser un store
+partagé comme **Redis/Upstash** (`@upstash/ratelimit`, mentionné comme
+bonus dans le brief) pour un rate limiting fiable à l'échelle.
 
 
 
