@@ -668,6 +668,78 @@ Voir Faille #2 (section 3) : `SESSION_SECRET` déplacé dans
 documentée : le secret reste visible dans l'historique Git antérieur
 à la correction (voir section 5 — limites).
 
+### Branch protection sur `main`
+
+**Correctif** : activation d'une règle de protection sur la branche
+`main` (GitHub → Settings → Branches) exigeant que le check de statut
+**`audit`** (le job du workflow `security.yml`) passe avant tout
+merge. Sans cela, un pipeline CI rouge n'aurait eu aucun effet réel —
+n'importe qui aurait pu merger malgré un échec.
+
+### Preuve de blocage CI — résultat et limite découverte
+
+**Test réalisé** : ouverture d'une Pull Request (`#8`) réintroduisant
+volontairement la faille XSS stockée (retour à
+`dangerouslySetInnerHTML` dans `app/commentaires/page.tsx`), pour
+vérifier que le pipeline CI bloque bien une régression de sécurité.
+
+![alt text](image-41.png)
+
+**Résultat observé** : contrairement à l'attendu, le check
+`Sécurité / audit` est passé avec succès (`All checks have passed`),
+et le bouton "Merge pull request" était actif — la PR n'a **pas** été
+bloquée.
+
+![alt text](image-42.png)
+
+**Analyse de la cause** : ce résultat est cohérent avec la découverte
+faite à l'Étape 1 de l'audit (voir section 1) : la règle ESLint
+`react/no-danger` n'est pas activée par `next/core-web-vitals` (seule
+la variante restrictive `react/no-danger-with-children` l'est), et
+Semgrep en mode `--config auto` sans compte n'a pas de règle couvrant
+spécifiquement ce pattern. La CI exécute donc fidèlement les mêmes
+outils que l'audit manuel — avec exactement la même limite.
+
+**Conclusion** : ce test révèle une **limite réelle et non
+résolue** du pipeline actuel : il protège efficacement contre les
+régressions de dépendances vulnérables (`npm audit`) et certains
+patterns syntaxiques courants, mais **ne bloque pas** la
+réintroduction d'un XSS stocké via `dangerouslySetInnerHTML`. Une
+amélioration future nécessaire serait l'ajout d'une règle Semgrep
+**personnalisée** (comme évoqué dans le brief §8 :
+`--config regles/xss.yml --error`) ciblant explicitement
+`dangerouslySetInnerHTML`, ou l'activation de la règle ESLint
+`react/no-danger` directement dans `eslint.config.mjs`. Cette limite
+est documentée en section 5 (Ce qui reste à faire).
+
+**Action corrective immédiate** : en attendant cette amélioration de
+la CI, la PR de démonstration a été fermée sans être mergée (pas de
+réintroduction réelle de la faille dans `main`), confirmant que la
+vigilance manuelle reste indispensable en complément de l'outillage
+automatique — exactement la conclusion de l'audit initial.
 
 
 ## 5. Ce qui reste à faire / limites
+
+- **CI ne bloque pas tous les patterns dangereux** : testé en
+  pratique (PR #8), le pipeline actuel ne détecte pas la
+  réintroduction de `dangerouslySetInnerHTML`. À corriger via une
+  règle Semgrep personnalisée ou l'activation explicite de
+  `react/no-danger` dans la config ESLint.
+- **Rate limiting en mémoire** : le compteur de tentatives de login
+  (`lib/rateLimit.ts`) est stocké dans une simple `Map` JavaScript,
+  remise à zéro à chaque redémarrage du serveur, et non partagée entre
+  plusieurs instances. En production : migrer vers Redis/Upstash
+  (`@upstash/ratelimit`).
+- **Secret historique non purgé** : `SESSION_SECRET` reste visible
+  dans l'historique Git antérieur à son déplacement vers `.env.local`
+  (confirmé via `git log -p`). Sur un vrai projet, il faudrait roter
+  ce secret et envisager une réécriture d'historique
+  (`git filter-repo`).
+- **Pas de 2FA** : le login reste à facteur unique (email + mot de
+  passe), conforme aux exigences du brief mais non couvert par les
+  bonus.
+- **Pas de RLS réelle** : le contrôle d'accès sur les notes (IDOR) est
+  fait au niveau de la requête applicative (`AND userId = ?`), pas au
+  niveau de la base de données elle-même (RLS Supabase), faute de
+  vraie base PostgreSQL dans ce labo (alasql en mémoire).
