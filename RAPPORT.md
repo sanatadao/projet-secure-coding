@@ -524,11 +524,67 @@ horizontal. En production, la bonne pratique est d'utiliser un store
 partagé comme **Redis/Upstash** (`@upstash/ratelimit`, mentionné comme
 bonus dans le brief) pour un rate limiting fiable à l'échelle.
 
+### Faille #11 — CSRF sur `/api/profil` — Moyen — A01
 
+**Problème** : la route `POST /api/profil` (changement d'email)
+identifiait l'utilisateur **uniquement** via le cookie de session. Or
+le navigateur joint automatiquement les cookies à toute requête vers
+un domaine, **même** lorsque cette requête est déclenchée par un
+`<form>` hébergé sur un site tiers malveillant. Le serveur ne demandant
+aucune autre preuve, un site pirate pouvait modifier l'email d'une
+victime connectée à son insu.
 
+**Correctif (cause racine)** : mise en place du pattern
+**double-submit cookie**. Au login, un jeton aléatoire (`csrf_token`)
+est posé dans un cookie **lisible** (pas httpOnly, car le frontend doit
+pouvoir le lire pour le renvoyer). Toute action sensible (ici, le
+changement d'email) exige désormais ce **même** jeton dans un header
+`x-csrf-token`. Un site tiers ne peut pas lire le cookie d'un autre
+domaine (politique same-origin du navigateur), donc ne peut pas
+reconstituer le header attendu — la requête forgée est rejetée.
 
+```typescript
+// au login : pose du jeton CSRF (cookie lisible)
+res.cookies.set("csrf_token", jetonCsrf, {
+  httpOnly: false, secure: true, sameSite: "lax", path: "/",
+});
 
+// dans /api/profil : vérification du double-submit
+const jetonCookie = req.cookies.get("csrf_token")?.value;
+const jetonHeader = req.headers.get("x-csrf-token");
+if (!jetonCookie || !jetonHeader || jetonCookie !== jetonHeader) {
+  return NextResponse.json({ error: "Jeton CSRF invalide" }, { status: 403 });
+}
+```
 
+**Preuve — AVANT/APRÈS** :
+- AVANT : requête avec uniquement le cookie de session, aucun jeton :
+
+![alt text](image-28.png)
+
+![alt text](image-29.png)
+
+![alt text](image-30.png)
+
+L'attaque réussit, confirmée par une reconnexion réussie sur
+  `pirate@evil.test`. ❌
+
+- APRÈS (même commande, sans jeton) :
+
+![alt text](image-31.png)
+
+![alt text](image-32.png)
+
+![alt text](image-33.png)
+
+![alt text](image-34.png)
+
+L'attaque est bloquée. ✅
+
+- APRÈS, avec le bon jeton (récupéré depuis le cookie `csrf_token`,
+  envoyé dans le header `x-csrf-token`) :
+
+![alt text](image-35.png)
 
 
 ## 4. Durcissement

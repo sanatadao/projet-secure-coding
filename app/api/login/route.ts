@@ -1,15 +1,15 @@
-// app/api/login/route.ts — ✅ CORRIGÉ : paramétrage SQL + bcrypt + message neutre + réponse minimale + cookie sûr + rate limiting
+// app/api/login/route.ts — ✅ CORRIGÉ : paramétrage SQL + bcrypt + message neutre + réponse minimale + cookie sûr + rate limiting + jeton CSRF
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { getDb } from "@/lib/sqldb";
 import { autoriser } from "@/lib/rateLimit";
+import { genererJetonCsrf } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   const { email, password } = await req.json();
 
-  // ✅ CORRIGÉ : rate limiting — on bloque après 5 tentatives en 60s pour cet email
   if (!autoriser(email)) {
     return NextResponse.json(
       { error: "Trop de tentatives, réessaie plus tard" },
@@ -55,5 +55,15 @@ export async function POST(req: NextRequest) {
     sameSite: "lax",
     path: "/",
   });
+
+  // ✅ CORRIGÉ : jeton CSRF posé en cookie LISIBLE (pas httpOnly) — le double-submit en a besoin
+  const jetonCsrf = genererJetonCsrf();
+  res.cookies.set("csrf_token", jetonCsrf, {
+    httpOnly: false,
+    secure: true,
+    sameSite: "lax",
+    path: "/",
+  });
+
   return res;
 }
