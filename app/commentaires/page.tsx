@@ -1,4 +1,4 @@
-// app/commentaires/page.tsx — ✅ CORRIGÉ : affichage échappé par défaut (plus de dangerouslySetInnerHTML)
+// app/commentaires/page.tsx — ⚠️ DÉMO : faille réintroduite volontairement pour tester la CI
 import { getDb } from "@/lib/sqldb";
 
 export const runtime = "nodejs";
@@ -17,8 +17,7 @@ export default function CommentairesPage() {
       {comments.map((c) => (
         <div key={c.id} style={{ marginBottom: 12 }}>
           <b>{c.author} :</b>{" "}
-          {/* ✅ CORRIGÉ : React échappe automatiquement le texte entre { } */}
-          {c.html}
+          <span dangerouslySetInnerHTML={{ __html: c.html }} />
         </div>
       ))}
     </main>

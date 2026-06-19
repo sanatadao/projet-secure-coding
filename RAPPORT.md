@@ -668,6 +668,14 @@ Voir Faille #2 (section 3) : `SESSION_SECRET` déplacé dans
 documentée : le secret reste visible dans l'historique Git antérieur
 à la correction (voir section 5 — limites).
 
+### Branch protection sur `main`
+
+**Correctif** : activation d'une règle de protection sur la branche
+`main` (GitHub → Settings → Branches) exigeant que le check de statut
+**`audit`** (le job du workflow `security.yml`) passe avant tout
+merge. Sans cela, un pipeline CI rouge n'aurait eu aucun effet réel —
+n'importe qui aurait pu merger malgré un échec.
+
 
 
 ## 5. Ce qui reste à faire / limites
