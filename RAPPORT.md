@@ -276,11 +276,73 @@ valides crée toujours la note normalement.
 ![alt text](image-6.png)
 ![alt text](image-12.png)
 
+### Faille #10 — IDOR sur `/api/notes/[id]` — Élevé — A01
 
+**Problème** : la route `GET /api/notes/[id]` récupérait une note par
+son `id` avec une requête déjà **paramétrée** (donc pas d'injection
+SQL ici), mais ne vérifiait **jamais** si cette note appartenait
+réellement à l'utilisateur connecté. N'importe quel utilisateur
+authentifié pouvait lire la note de n'importe qui d'autre en changeant
+simplement l'`id` dans l'URL.
 
+**Correctif (cause racine)** : ajout d'un contrôle d'accès **côté
+serveur**, directement dans la requête SQL — on filtre désormais sur
+`id` **ET** `userId` (celui du cookie de session). Si la note existe
+mais appartient à un autre utilisateur, la requête ne retourne aucune
+ligne, et l'API répond `404 Note introuvable` — exactement la même
+réponse que si la note n'existait pas, pour ne pas révéler son
+existence à un utilisateur non autorisé.
 
+- Avant :
+```typescript
+  const rows = db("SELECT * FROM notes WHERE id = ?", [Number(id)]);
+  // pas de vérification de propriété
+```
+- Après :
+```typescript
+  const sessionId = req.cookies.get("mininotes_session")?.value;
+  if (!sessionId) return NextResponse.json({ error: "Non connecté" }, { status: 401 });
 
+  const rows = db("SELECT * FROM notes WHERE id = ? AND userId = ?", [
+    Number(id),
+    Number(sessionId),
+  ]);
+```
 
+**Preuve — AVANT/APRÈS** :
+
+- AVANT :
+
+![alt text](image-14.png)
+
+![alt text](image-15.png)
+
+![alt text](image-16.png)
+
+Alice (id=1) lisait la note privée de l'admin (id=3). ❌
+
+- APRÈS (même commande) :
+
+![alt text](image-17.png)
+
+![alt text](image-18.png)
+
+![alt text](image-19.png)
+
+L'accès à la note d'autrui est désormais bloqué. ✅
+
+**Non-régression vérifiée** :
+- Alice peut toujours lire **sa propre** note (`GET /api/notes/1` →
+  200, contenu correct).
+- Un appel sans cookie de session est rejeté avec `401 Non connecté`,
+  confirmant que le contrôle d'authentification est bien la première
+  vérification appliquée.
+
+**Note méthodologique** : ce correctif illustre bien la différence
+entre une requête *paramétrée* (qui protège contre l'injection SQL) et
+un *contrôle d'accès* (qui protège contre l'IDOR) — ce sont deux
+protections **indépendantes et complémentaires** ; avoir l'une ne
+dispense jamais de l'autre.
 
 
 
