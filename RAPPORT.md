@@ -344,6 +344,60 @@ un *contrôle d'accès* (qui protège contre l'IDOR) — ce sont deux
 protections **indépendantes et complémentaires** ; avoir l'une ne
 dispense jamais de l'autre.
 
+### Faille #12 — XSS stocké sur `/commentaires` — Élevé — A03
+
+**Problème** : la page `app/commentaires/page.tsx` affichait le champ
+`html` de chaque commentaire via `dangerouslySetInnerHTML`, qui insère
+le contenu **tel quel** dans le DOM, sans aucun échappement. Un
+attaquant pouvant poster un commentaire (ou dont le commentaire serait
+stocké via une faille amont) pouvait y injecter du JavaScript
+arbitraire, exécuté automatiquement chez **chaque visiteur** de la
+page.
+
+**Correctif (cause racine)** : suppression de `dangerouslySetInnerHTML`,
+remplacé par un affichage `{c.html}` classique. React échappe
+**automatiquement** tout ce qui est inséré entre accolades `{ }` — le
+contenu est donc toujours traité comme du **texte**, jamais comme du
+HTML actif, quel que soit son contenu.
+
+- Avant :
+```tsx
+  <span dangerouslySetInnerHTML={{ __html: c.html }} />
+```
+- Après :
+```tsx
+  {c.html}
+```
+
+**Preuve — AVANT/APRÈS** :
+
+- AVANT : un commentaire contenant
+  `<img src=x onerror="alert('XSS')">` déclenchait une **fenêtre
+  d'alerte JavaScript** à l'ouverture de la page — capture d'écran
+  jointe (`avant-xss.png`) montrant l'alerte exécutée. ❌
+
+![alt text](image-20.png)  
+![alt text](image-21.png)
+
+- APRÈS (même commentaire en base) : la page affiche le texte
+  **littéral** `<img src=x onerror="alert('XSS')">` sans déclencher
+  aucune alerte — capture d'écran jointe (`apres-xss.png`). Vérification
+  technique via `curl` : le contenu renvoyé dans le HTML contient les
+  entités échappées `&lt;img src=x onerror=...&gt;` au lieu de la
+  balise active, confirmant que React a neutralisé l'injection. ✅
+
+![alt text](image-22.png)
+
+**Non-régression vérifiée** : le commentaire normal d'Alice
+("Super appli !") s'affiche toujours correctement sur la page.
+
+**Limite assumée** : cette correction empêche tout HTML, y compris du
+HTML "riche" légitime (gras, liens). Si une mise en forme riche est
+nécessaire à l'avenir, la bonne pratique est d'utiliser une librairie
+de *sanitization* comme **DOMPurify** plutôt que de revenir à
+`dangerouslySetInnerHTML` brut (mentionné en bonus dans le brief,
+non implémenté ici par choix de rester sur la solution la plus sûre).
+
 
 
 
