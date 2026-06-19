@@ -8,10 +8,9 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params; // ⚙️ Next 15+ : params est asynchrone
+  const { id } = await params;
   const db = getDb();
 
-  // La requête est paramétrée (pas d'injection ICI)…
   const rows = db("SELECT * FROM notes WHERE id = ?", [Number(id)]);
   if (!rows.length) {
     return NextResponse.json({ error: "Note introuvable" }, { status: 404 });

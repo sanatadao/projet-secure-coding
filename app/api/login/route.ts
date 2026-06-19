@@ -1,5 +1,6 @@
-// app/api/login/route.ts — ⚠️ CODE VOLONTAIREMENT VULNÉRABLE (labo)
+// app/api/login/route.ts — ✅ CORRIGÉ : paramétrage SQL + bcrypt + message neutre + réponse minimale + cookie sûr
 import { NextRequest, NextResponse } from "next/server";
+import bcrypt from "bcryptjs";
 import { getDb } from "@/lib/sqldb";
 
 export const runtime = "nodejs";
@@ -8,25 +9,46 @@ export async function POST(req: NextRequest) {
   const { email, password } = await req.json();
   const db = getDb();
 
-  // ⚠️ FAILLE : entrées COLLÉES dans la requête → injection SQL
-  const sql = `SELECT * FROM users WHERE email = '${email}' AND password = '${password}'`;
-  console.log("🔎 SQL exécuté :", sql); // pour VOIR l'injection dans le terminal
+  // ✅ CORRIGÉ : requête paramétrée — email/password ne sont plus collés dans le SQL
+  const sql = `SELECT * FROM users WHERE email = ?`;
+  const rows = db(sql, [email]) as Array<{
+    id: number;
+    email: string;
+    password: string;
+    role: string;
+  }>;
 
-  const rows = db(sql) as Array<{ id: number; email: string; role: string }>;
-
+  // ✅ CORRIGÉ : message neutre, identique que l'email existe ou non (anti-énumération)
   if (rows.length === 0) {
-    // ⚠️ FAILLE : message TROP précis → énumération d'emails. Aucune limite de tentatives → brute force.
     return NextResponse.json(
-      { error: `Aucun compte ${email} avec ce mot de passe` },
+      { error: "Email ou mot de passe invalide" },
       { status: 401 }
     );
   }
 
   const user = rows[0];
-  // ⚠️ FAILLE : on renvoie TOUT l'objet user (mot de passe + rôle compris)
-  const res = NextResponse.json({ message: "Connecté", user });
 
-  // ⚠️ FAILLE : cookie de session LISIBLE en JS (httpOnly:false) → volable par XSS
-  res.cookies.set("mininotes_session", String(user.id), { httpOnly: false, path: "/" });
+  // ✅ CORRIGÉ : comparaison via bcrypt, jamais de comparaison de clair
+  const motDePasseValide = await bcrypt.compare(password, user.password);
+  if (!motDePasseValide) {
+    return NextResponse.json(
+      { error: "Email ou mot de passe invalide" },
+      { status: 401 }
+    );
+  }
+
+  // ✅ CORRIGÉ : on ne renvoie que le strict nécessaire, jamais le hash du mot de passe
+  const res = NextResponse.json({
+    message: "Connecté",
+    user: { id: user.id, email: user.email, role: user.role },
+  });
+
+  // ✅ CORRIGÉ : cookie httpOnly (illisible en JS, donc involable par XSS) + secure + sameSite
+  res.cookies.set("mininotes_session", String(user.id), {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    path: "/",
+  });
   return res;
 }

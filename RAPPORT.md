@@ -113,6 +113,176 @@ réduit déjà une grande partie de leur impact potentiel.
 
 ## 3. Correctifs
 
+### Faille #3, #8, #9 — Injection SQL (login + GET/POST notes) — Critique — A03
+
+**Problème** : dans `app/api/login/route.ts`, `app/api/notes/route.ts`
+(GET et POST), les valeurs venant de l'utilisateur (email, password,
+cookie de session, titre, contenu) étaient **concaténées directement**
+dans la chaîne SQL via des template literals (`` `WHERE email = '${email}'` ``).
+Un attaquant pouvait injecter du SQL arbitraire en plaçant des
+caractères spéciaux (`'`, `--`) dans ces champs.
+
+**Correctif (cause racine)** : remplacement de toutes les requêtes
+concaténées par des **requêtes paramétrées** (`?` + tableau de valeurs
+passé séparément). Le SQL et les données ne sont plus jamais mélangés
+dans la même chaîne — l'injection devient structurellement impossible,
+quelle que soit la valeur envoyée.
+
+- Avant (login) :
+```typescript
+  const sql = `SELECT * FROM users WHERE email = '${email}' AND password = '${password}'`;
+```
+- Après (login) :
+```typescript
+  const sql = `SELECT * FROM users WHERE email = ?`;
+  const rows = db(sql, [email]);
+```
+
+**Preuve — AVANT/APRÈS** :
+
+- AVANT :
+
+![alt text](image-2.png)
+![alt text](image-5.png)
+
+
+- APRÈS (même commande) :
+
+![alt text](image-8.png)
+![alt text](image-11.png)
+
+
+
+**Non-régression vérifiée** : login normal d'Alice → toujours
+`{"message":"Connecté",...}` (200) ; `GET /api/notes` → renvoie
+toujours les notes d'Alice ; `POST /api/notes` → création toujours
+fonctionnelle.
+
+---
+
+### Faille #1 — Mots de passe en clair — Élevé — A02
+
+**Problème** : `lib/sqldb.ts` stockait les mots de passe en clair
+(`'azerty123'`) directement dans la base, et `app/api/login/route.ts`
+les comparait avec `===`.
+
+**Correctif (cause racine)** : hachage avec **bcrypt**
+(`bcrypt.hashSync(motDePasse, 10)`) au moment du seed, et comparaison
+via `bcrypt.compare(password, user.password)` au login — jamais de
+comparaison de texte en clair.
+
+- Avant : `password: "azerty123"` stocké tel quel.
+- Après : `password: "$2a$10$..."` (hash bcrypt, irréversible).
+
+**Preuve** : inspection de la table `users` en mémoire (via
+`console.log` temporaire) confirme que seul le hash est stocké ;
+`bcrypt.compare("azerty123", hash)` retourne `true`,
+`bcrypt.compare("mauvaismdp", hash)` retourne `false`.
+
+**Non-régression vérifiée** : login d'Alice toujours fonctionnel avec
+son mot de passe en clair habituel (`azerty123`) — bcrypt gère la
+comparaison de façon transparente côté utilisateur.
+
+---
+
+### Faille #4 — Fuite de l'objet user complet + message d'erreur bavard — Élevé/Moyen — A01/A02/A07
+
+**Problème** : la réponse de `/api/login` renvoyait l'objet `user`
+complet, y compris le mot de passe (haché ou non) ; et le message
+d'erreur précisait l'email testé (`"Aucun compte ${email}..."`),
+permettant l'énumération de comptes valides.
+
+**Correctif (cause racine)** : réponse réduite au strict nécessaire
+(`{ id, email, role }`), et message d'erreur **neutre et identique**
+("Email ou mot de passe invalide") que l'email existe ou non.
+
+- Avant : `NextResponse.json({ message: "Connecté", user })` (objet complet).
+- Après : `NextResponse.json({ message: "Connecté", user: { id: user.id, email: user.email, role: user.role } })`.
+
+**Preuve — AVANT/APRÈS** :
+- AVANT : réponse contenait `"password":"azerty123"`.
+- APRÈS : réponse ne contient plus que `id`, `email`, `role`.
+- AVANT : email inconnu → `"Aucun compte x@y.com avec ce mot de passe"`.
+- APRÈS : email inconnu OU mauvais mot de passe → message identique
+  `"Email ou mot de passe invalide"`.
+
+![alt text](image-3.png)
+![alt text](image-9.png)
+
+**Non-régression vérifiée** : login normal toujours fonctionnel,
+informations essentielles (id, email, role) toujours disponibles côté
+client pour la suite de l'app.
+
+---
+
+### Faille #7 — Cookie de session non-httpOnly — Moyen — A05/A07
+
+**Problème** : le cookie `mininotes_session` était posé avec
+`httpOnly: false`, le rendant lisible via `document.cookie` en
+JavaScript — donc volable par n'importe quel XSS.
+
+**Correctif (cause racine)** : ajout des attributs `httpOnly: true`,
+`secure: true`, `sameSite: "lax"`.
+
+- Avant : `res.cookies.set("mininotes_session", ..., { httpOnly: false, path: "/" })`.
+- Après : `res.cookies.set("mininotes_session", ..., { httpOnly: true, secure: true, sameSite: "lax", path: "/" })`.
+
+**Preuve** :
+
+![alt text](image-4.png)
+![alt text](image-10.png)
+
+La présence de `HttpOnly` confirme que le cookie n'est plus accessible
+en JavaScript.
+
+**Non-régression vérifiée** : la session continue de fonctionner
+normalement pour les requêtes authentifiées (`GET /api/notes`
+fonctionne toujours via le cookie).
+
+---
+
+### Faille #9 (validation) — Absence de validation des entrées — Moyen — A04
+
+**Problème** : `POST /api/notes` acceptait n'importe quel JSON sans
+validation de format, type ou taille.
+
+**Correctif (cause racine)** : ajout d'un schéma **Zod**
+(`lib/validation.ts`) avec `safeParse`, retournant `400` si invalide.
+Cette validation **complète** (ne remplace pas) le paramétrage SQL :
+Zod garantit la forme des données, le paramétrage garantit qu'elles ne
+cassent pas la syntaxe SQL.
+
+```typescript
+export const noteSchema = z.object({
+  titre: z.string().min(1).max(120),
+  contenu: z.string().max(5000),
+});
+```
+
+**Preuve — AVANT/APRÈS** :
+- AVANT : `{"titre":"","contenu":"test"}` → note créée avec titre vide.
+
+![alt text](image-7.png)
+
+- APRÈS : même payload → `400 { "error": "Données invalides", "details": {...} }`.
+
+![alt text](image-13.png)
+
+**Non-régression vérifiée** : `POST /api/notes` avec un titre/contenu
+valides crée toujours la note normalement.
+
+**PREUVE**
+
+![alt text](image-6.png)
+![alt text](image-12.png)
+
+
+
+
+
+
+
+
 
 
 ## 4. Durcissement
