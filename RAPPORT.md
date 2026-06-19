@@ -587,7 +587,86 @@ L'attaque est bloquée. ✅
 ![alt text](image-35.png)
 
 
-## 4. Durcissement
+## 4. Durcissement (secrets, en-têtes, CI/CD, deps)
+
+### En-têtes de sécurité
+
+**Problème** : aucune en-tête de sécurité n'était envoyée par
+l'application (vérifié via `curl -sI`), laissant le navigateur sans
+consignes de protection supplémentaires (CSP, anti-clickjacking,
+HTTPS forcé...).
+
+**Correctif** : ajout de 5 en-têtes dans `next.config.ts` via la
+fonction `headers()` :
+- `Content-Security-Policy` : restreint les sources de scripts/styles/
+  images au domaine lui-même (`'self'`), réduisant l'impact d'un XSS
+  qui passerait malgré tout.
+- `X-Frame-Options: DENY` : empêche l'affichage du site dans une
+  `<iframe>` (anti-clickjacking).
+- `X-Content-Type-Options: nosniff` : empêche le navigateur de
+  réinterpréter le type d'un fichier servi.
+- `Referrer-Policy: strict-origin-when-cross-origin` : limite les
+  informations transmises dans l'en-tête `Referer` lors d'une
+  navigation vers un autre site.
+- `Strict-Transport-Security` (HSTS) : force l'usage d'HTTPS pour le
+  domaine.
+
+**Preuve — AVANT/APRÈS** :
+- AVANT :
+
+![alt text](image-36.png)
+
+- APRÈS (même commande) :
+
+![alt text](image-37.png)
+
+Les 5 en-têtes sont désormais bien présents sur toutes les routes.
+
+---
+
+### Dépendances saines (Dependabot)
+
+**Correctif** : ajout de `.github/dependabot.yml`, configurant une
+surveillance hebdomadaire des dépendances npm avec ouverture
+automatique de Pull Requests en cas de mise à jour disponible.
+
+**Preuve concrète** : Dependabot a immédiatement détecté et proposé
+une mise à jour réelle dès l'activation : PR automatique
+`Bump @types/bcryptjs from 2.4.6 to 3.0.0`, passée avec succès dans le
+pipeline CI (voir capture plus bas). C'est une preuve de
+fonctionnement réel, pas seulement de configuration théorique.
+
+---
+
+### Pipeline CI/CD bloquant (GitHub Actions)
+
+**Correctif** : ajout de `.github/workflows/security.yml`, qui
+exécute à chaque push et Pull Request sur `main` :
+1. `npm ci` (install reproductible)
+2. `npx eslint .` (analyse statique)
+3. `npm audit --audit-level=high` (dépendances)
+4. `semgrep scan --config auto --error .` (SAST)
+
+Chaque étape **échoue le job** si elle trouve un problème (aucun
+`continue-on-error`, aucun `|| true`, aucune étape commentée ou
+retirée) — la porte peut donc réellement devenir rouge.
+
+**Preuve** : exécution du workflow visible via `gh run watch`,
+déclenchée automatiquement par la PR Dependabot ci-dessus : les 4
+étapes (ESLint, npm audit, installation Semgrep, Semgrep) sont passées
+avec le statut ✓, job complet en succès
+(`Run Sécurité (27803591484) completed with 'success'`).
+
+![alt text](image-38.png)
+
+---
+
+### Secrets hors du code
+
+Voir Faille #2 (section 3) : `SESSION_SECRET` déplacé dans
+`.env.local` (gitignoré), avec `.env.example` fourni en modèle. Limite
+documentée : le secret reste visible dans l'historique Git antérieur
+à la correction (voir section 5 — limites).
 
 
 
